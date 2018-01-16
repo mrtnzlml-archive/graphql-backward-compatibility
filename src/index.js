@@ -1,78 +1,39 @@
-import fs from 'fs';
-
-import {
-  findBreakingChanges,
-  buildClientSchema,
-  introspectionQuery,
-  graphql,
-} from 'graphql';
-import chalk from 'chalk';
+import { buildClientSchema } from 'graphql';
 import mri from 'mri';
+import fs from 'fs';
+import path from 'path';
+
+import assertBreakingChanges from './assertBreakingChanges';
+import assertOutdatedSchema from './assertOutdatedSchema';
 
 const config = mri(process.argv, {
   string: ['schema', 'snapshot'],
 });
 
-const schema = require(config.schema).default;
-const snapshotLocation = config.snapshot;
+const schema = require(path.join(process.cwd(), config.schema)).default;
+const snapshotLocation = path.join(process.cwd(), config.snapshot);
 
-const oldSchema = buildClientSchema(require(snapshotLocation));
+let snapshot;
+try {
+  snapshot = require(snapshotLocation);
+} catch (error) {
+  // snapshot doesn't exist yet - let's create it with minimal schema
+  fs.writeFileSync(
+    snapshotLocation,
+    JSON.stringify({
+      __schema: {
+        types: [],
+      },
+    }),
+    { flag: 'wx' },
+  );
+  snapshot = require(snapshotLocation); // FIXME doesn't exist (?)
+}
+
+const oldSchema = buildClientSchema(snapshot);
 const newSchema = schema;
 
-const printChanges = changes => {
-  console.error('');
-  for (const change of changes) {
-    console.error(chalk.red.bold(change.type) + ' - ' + change.description);
-  }
-  console.error('');
-};
-
 (async () => {
-  let changes = findBreakingChanges(oldSchema, newSchema);
-  if (changes.length > 0) {
-    console.error(
-      chalk.red(
-        'You introduced breaking changes into the public GraphQL schema. ',
-      ) +
-        'This change may or may not be intentional. These breaking changes ' +
-        'may break some clients consuming our public API. Please try to ' +
-        'find a way how to avoid breaking changes and try it again. Here is ' +
-        'list of all breaking changes:',
-    );
-    printChanges(changes);
-    console.error(
-      `Tips how to avoid breaking changes:
-
-- field removal/modification (introduce new field and only deprecate the old one)
-- type removal/modification (just deprecate it and leave it there)
-- removal from enum/union (introduce new enum/union)
-- arguments removal/modification (introduce new query or graph node)
-- change nullable -> non-nullable (just don't do it or introduce new field)
-- interface removal (don't or introduce new objects)
-- change of default argument value (don't or introduce new argument/query)
-`,
-    );
-    process.exit(1);
-  }
-
-  changes = findBreakingChanges(newSchema, oldSchema);
-  if (changes.length > 0) {
-    console.warn(
-      chalk.yellow.bold(
-        `\nGraphQL schema snapshot IS OUTDATED! (updating automatically)`,
-      ),
-    );
-    const meta = await graphql(schema, introspectionQuery);
-    fs.writeFileSync(snapshotLocation, JSON.stringify(meta.data, null, 2));
-    console.log(
-      'Snapshot of the GraphQL schema successfully created! Now please commit it...\n',
-    );
-    process.exit(1); // this is also considered failure so CI will fail (must be committed manually)
-  } else {
-    console.log(
-      chalk.green.bold(
-        '\nCongratulations! NO BREAKING CHANGES or OUTDATED SCHEMA. Good job!\n',
-      ),
-    );
-  }
+  assertBreakingChanges(oldSchema, newSchema); // breaks immediately
+  await assertOutdatedSchema(oldSchema, newSchema, schema, snapshotLocation);
 })();

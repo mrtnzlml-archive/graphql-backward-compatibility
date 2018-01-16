@@ -5,5 +5,11 @@
     "chalk": "^2.3.0",
     "graphql": "^0.12.3",
     "mri": "^1.1.0"
+  },
+  "scripts": {
+    "build": "yarn babel src/ --out-dir src.build"
+  },
+  "devDependencies": {
+    "babel-plugin-transform-flow-comments": "^6.22.0"
   }
 }
